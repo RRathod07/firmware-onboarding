@@ -1,0 +1,82 @@
+name: Build & Test
+
+# Since every trainee creates their own PlatformIO project under
+# submissions/<username>/, this workflow doesn't know the project path
+# ahead of time. Instead it looks at which files changed in the PR,
+# finds the submission folder(s) touched, and builds/tests just those —
+# so one person's PR never depends on anyone else's project existing or
+# being valid.
+
+on:
+  pull_request:
+    paths:
+      - "submissions/**"
+
+jobs:
+  discover:
+    name: Find changed submissions
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find changed submission project directories
+        id: find
+        run: |
+          # Top-level submissions/<username>/ dirs touched by this PR,
+          # limited to ones that actually contain a platformio.ini.
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^submissions/' \
+            | awk -F/ '{print "submissions/"$2}' \
+            | sort -u)
+
+          dirs="[]"
+          entries=()
+          for d in $changed; do
+            if [ -f "$d/platformio.ini" ]; then
+              entries+=("\"$d\"")
+            fi
+          done
+          if [ ${#entries[@]} -gt 0 ]; then
+            dirs="[$(IFS=,; echo "${entries[*]}")]"
+          fi
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          echo "Found project dirs: $dirs"
+
+  build-and-test:
+    name: Build + test submission
+    needs: discover
+    if: needs.discover.outputs.dirs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project_dir: ${{ fromJson(needs.discover.outputs.dirs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build firmware
+        working-directory: ${{ matrix.project_dir }}
+        # Explicitly target the "uno" env — if a trainee added an
+        # [env:native] section for the stretch goal, a bare `pio run`
+        # would try (and fail) to build it as firmware too.
+        run: pio run -e uno
+
+      - name: Run native tests (if present)
+        working-directory: ${{ matrix.project_dir }}
+        run: |
+          if grep -q "env:native" platformio.ini 2>/dev/null; then
+            pio test -e native
+          else
+            echo "No [env:native] found — skipping (native tests are a stretch goal, see TASK.md)"
+          fi
