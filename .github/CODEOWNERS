@@ -1,3 +1,1 @@
-# Auto-request review on every PR opened against this repo.
-# Replace with the actual mentor/reviewer handle(s).
-* @your-github-handle
+@hytech-racing/firmware-lead
